@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Local data
+data/bronze/
+data/tmp/
+logs/
+
+# Keep directory structure if desired
+!data/bronze/.gitkeep
+!data/tmp/.gitkeep
+!logs/.gitkeep
