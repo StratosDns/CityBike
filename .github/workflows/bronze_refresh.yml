@@ -1,0 +1,110 @@
+name: Bronze Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_month:
+        description: "Inclusive start month in YYYY-MM format"
+        required: true
+        default: "2024-01"
+        type: string
+      end_month:
+        description: "Inclusive end month in YYYY-MM format"
+        required: true
+        default: "2024-03"
+        type: string
+      fetch_gbfs:
+        description: "Fetch GBFS station snapshots"
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bronze-refresh-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  refresh-bronze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      DEFAULT_START_MONTH: "2024-01"
+      DEFAULT_END_MONTH: "2024-03"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve month inputs
+        id: resolve_months
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            START_MONTH="${{ inputs.start_month }}"
+            END_MONTH="${{ inputs.end_month }}"
+            FETCH_GBFS="${{ inputs.fetch_gbfs }}"
+          else
+            START_MONTH="${DEFAULT_START_MONTH}"
+            END_MONTH="${DEFAULT_END_MONTH}"
+            FETCH_GBFS="true"
+          fi
+
+          echo "start_month=${START_MONTH}" >> "${GITHUB_OUTPUT}"
+          echo "end_month=${END_MONTH}" >> "${GITHUB_OUTPUT}"
+          echo "fetch_gbfs=${FETCH_GBFS}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run trip-data ingestion
+        run: |
+          python src/load_tripdata.py \
+            --start-month "${{ steps.resolve_months.outputs.start_month }}" \
+            --end-month "${{ steps.resolve_months.outputs.end_month }}"
+
+      - name: Run GBFS snapshot ingestion
+        if: steps.resolve_months.outputs.fetch_gbfs == 'true'
+        run: |
+          python src/load_gbfs_snapshot.py \
+            --feeds station_information station_status
+
+      - name: Create artifact manifest
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          {
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "event_name=${GITHUB_EVENT_NAME}"
+            echo "start_month=${{ steps.resolve_months.outputs.start_month }}"
+            echo "end_month=${{ steps.resolve_months.outputs.end_month }}"
+            echo "fetch_gbfs=${{ steps.resolve_months.outputs.fetch_gbfs }}"
+            echo "generated_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          } > artifacts/run_metadata.txt
+
+      - name: Upload bronze manifests and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bronze-refresh-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            artifacts/run_metadata.txt
+            logs/*.log
+            data/bronze/**/manifest.json
+            data/bronze/gbfs/**/*.json
