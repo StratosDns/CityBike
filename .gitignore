@@ -12,12 +12,11 @@ venv/
 .idea/
 .vscode/
 
-# Local data
 data/bronze/
 data/tmp/
+data/silver/
 logs/
 
-# Keep directory structure if desired
 !data/bronze/.gitkeep
 !data/tmp/.gitkeep
 !logs/.gitkeep

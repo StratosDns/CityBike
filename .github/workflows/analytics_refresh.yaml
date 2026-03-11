@@ -1,0 +1,121 @@
+name: Analytics Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_month:
+        description: "Inclusive start month in YYYY-MM format"
+        required: true
+        default: "2024-01"
+        type: string
+      end_month:
+        description: "Inclusive end month in YYYY-MM format"
+        required: true
+        default: "2024-03"
+        type: string
+      publish_outputs:
+        description: "Commit published CSV outputs back to the repository"
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: "23 3 * * 0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: analytics-refresh-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  refresh-analytics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      DEFAULT_START_MONTH: "2024-01"
+      DEFAULT_END_MONTH: "2024-03"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve inputs
+        id: resolve_inputs
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            START_MONTH="${{ inputs.start_month }}"
+            END_MONTH="${{ inputs.end_month }}"
+            PUBLISH_OUTPUTS="${{ inputs.publish_outputs }}"
+          else
+            START_MONTH="${DEFAULT_START_MONTH}"
+            END_MONTH="${DEFAULT_END_MONTH}"
+            PUBLISH_OUTPUTS="true"
+          fi
+
+          echo "start_month=${START_MONTH}" >> "${GITHUB_OUTPUT}"
+          echo "end_month=${END_MONTH}" >> "${GITHUB_OUTPUT}"
+          echo "publish_outputs=${PUBLISH_OUTPUTS}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run trip-data ingestion
+        run: |
+          python src/load_tripdata.py \
+            --start-month "${{ steps.resolve_inputs.outputs.start_month }}" \
+            --end-month "${{ steps.resolve_inputs.outputs.end_month }}"
+
+      - name: Run GBFS snapshot ingestion
+        run: |
+          python src/load_gbfs_snapshot.py \
+            --feeds station_information station_status
+
+      - name: Run preprocessing
+        run: |
+          python src/preprocess_tripdata.py \
+            --start-month "${{ steps.resolve_inputs.outputs.start_month }}" \
+            --end-month "${{ steps.resolve_inputs.outputs.end_month }}"
+
+      - name: Build gold marts
+        run: |
+          python src/build_marts.py \
+            --start-month "${{ steps.resolve_inputs.outputs.start_month }}" \
+            --end-month "${{ steps.resolve_inputs.outputs.end_month }}" \
+            --publish
+
+      - name: Commit published analytics outputs
+        if: steps.resolve_inputs.outputs.publish_outputs == 'true'
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain data/gold data/published logs)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/gold data/published logs
+            git commit -m "Refresh analytics outputs"
+            git push
+          else
+            echo "No analytics output changes detected."
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: analytics-refresh-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            logs/*.log
+            data/gold/*.csv
+            data/published/*.csv

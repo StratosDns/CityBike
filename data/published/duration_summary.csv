@@ -1,0 +1,3 @@
+member_type,total_rides,avg_ride_duration_minutes,median_ride_duration_minutes,p90_ride_duration_minutes
+member,5787108,10.628095099454972,7.703550000000001,20.836943333333327
+casual,883650,18.52623096188159,11.59815,35.33530333333333

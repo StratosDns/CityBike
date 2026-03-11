@@ -5,16 +5,16 @@ import logging
 
 from citibike_loader import month_range
 from config import LOG_DIR
-from marts import build_all_marts, publish_gold_outputs
+from preprocessing import discover_available_months, preprocess_months
 from utils import configure_logging
 
 
 def parse_args() -> argparse.Namespace:
     """
-    Parse CLI arguments for building gold marts.
+    Parse CLI arguments for preprocessing bronze Citi Bike data into silver parquet.
     """
     parser = argparse.ArgumentParser(
-        description="Build gold analytics tables from silver Citi Bike trip data."
+        description="Preprocess bronze Citi Bike trip data into analytics-ready silver parquet files."
     )
 
     month_group = parser.add_mutually_exclusive_group(required=False)
@@ -32,16 +32,11 @@ def parse_args() -> argparse.Namespace:
         "--end-month",
         help="Inclusive end month in YYYY-MM format. Required when using --start-month.",
     )
-    parser.add_argument(
-        "--publish",
-        action="store_true",
-        help="Copy gold CSV outputs into data/published for dashboard consumption.",
-    )
 
     return parser.parse_args()
 
 
-def resolve_months(args: argparse.Namespace) -> list[str] | None:
+def resolve_months(args: argparse.Namespace) -> list[str]:
     """
     Resolve the month selection from CLI arguments.
     """
@@ -54,23 +49,23 @@ def resolve_months(args: argparse.Namespace) -> list[str] | None:
     if args.months:
         return args.months
 
-    return None
+    discovered = discover_available_months()
+    if not discovered:
+        raise FileNotFoundError("No bronze months were found to preprocess.")
+
+    return discovered
 
 
 def main() -> None:
     """
-    Entry point for gold-mart generation.
+    Entry point for preprocessing.
     """
-    configure_logging(log_file=LOG_DIR / "build_marts.log", level=logging.INFO)
+    configure_logging(log_file=LOG_DIR / "preprocess_tripdata.log", level=logging.INFO)
     args = parse_args()
     months = resolve_months(args)
 
-    outputs = build_all_marts(months=months)
-    logging.getLogger(__name__).info("Built %s gold table(s).", len(outputs))
-
-    if args.publish:
-        published = publish_gold_outputs()
-        logging.getLogger(__name__).info("Published %s output file(s).", len(published))
+    summaries = preprocess_months(months)
+    logging.getLogger(__name__).info("Finished preprocessing %s month(s).", len(summaries))
 
 
 if __name__ == "__main__":
